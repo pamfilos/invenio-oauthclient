@@ -21,7 +21,7 @@
 
 from __future__ import absolute_import
 
-from flask import Blueprint, abort, current_app, request, url_for
+from flask import Blueprint, abort, current_app, redirect, request, url_for
 from invenio_db import db
 from itsdangerous import BadData, TimedJSONWebSignatureSerializer
 from werkzeug.local import LocalProxy
@@ -126,7 +126,12 @@ def authorized(remote_app=None):
            not(current_app.debug or current_app.testing)):
             abort(403)
 
-    return current_oauthclient.handlers[remote_app]()
+    try:
+        handler = current_oauthclient.handlers[remote_app]()
+    except RuntimeError:
+        return redirect('/')
+
+    return handler
 
 
 @blueprint.route('/signup/<remote_app>/', methods=['GET', 'POST'])
