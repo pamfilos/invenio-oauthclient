@@ -85,18 +85,17 @@ In templates you can add a sign in/up link:
 
 import copy
 import re
+
 from datetime import datetime, timedelta
 
 from flask import current_app, g, redirect, session, url_for
 from flask_login import current_user
-from flask_principal import AnonymousIdentity, RoleNeed, UserNeed, \
-    identity_changed, identity_loaded
+from flask_principal import AnonymousIdentity, RoleNeed, UserNeed, identity_changed, identity_loaded
 from invenio_db import db
 
 from invenio_oauthclient.models import RemoteAccount
 from invenio_oauthclient.proxies import current_oauthclient
-from invenio_oauthclient.utils import oauth_link_external_id, \
-    oauth_unlink_external_id
+from invenio_oauthclient.utils import oauth_link_external_id, oauth_unlink_external_id
 
 OAUTHCLIENT_CERN_HIDDEN_GROUPS = (
     'All Exchange People',
@@ -341,15 +340,21 @@ def on_identity_changed(sender, identity):
     )
     groups = []
     if account:
+        groups = account.extra_data.get('groups', [])
         remote = find_remote_by_client_id(client_id)
         resource = get_resource(remote)
         refresh = current_app.config.get(
             'OAUTHCLIENT_CERN_REFRESH_TIMEDELTA',
             OAUTHCLIENT_CERN_REFRESH_TIMEDELTA
         )
-        groups.extend(
-            account_groups(account, resource, refresh_timedelta=refresh)
-        )
+
+        # if 'resource' exists, update groups with new ones received
+        # else keep old ones from 'extra_data'
+        if resource:
+            oauth_groups = account_groups(
+                account, resource, refresh_timedelta=refresh)
+
+            groups = groups + list(set(oauth_groups) - set(groups))
 
     extend_identity(identity, groups)
 
