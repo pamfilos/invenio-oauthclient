@@ -216,7 +216,10 @@ def account_groups(account, resource, refresh_timedelta=None):
     if last_update > modified_since:
         return account.extra_data.get('groups', [])
 
-    groups = fetch_groups(resource['Group'])
+    groups = []
+    if resource and resource.get('Group', []):
+        groups = fetch_groups(resource['Group'])
+
     account.extra_data.update(
         groups=groups,
         updated=updated.isoformat(),
