@@ -346,6 +346,7 @@ def on_identity_changed(sender, identity):
     )
     groups = []
     if account:
+        groups = account.extra_data.get('groups', [])
         remote = find_remote_by_client_id(client_id)
         resource = get_resource(remote)
         refresh = current_app.config.get(
@@ -355,6 +356,20 @@ def on_identity_changed(sender, identity):
         groups.extend(
             account_groups(account, resource, refresh_timedelta=refresh)
         )
+
+        # if 'resource' exists, update groups with new ones received
+        # else keep old ones from 'extra_data'
+        try:
+            groups.extend(
+                account_groups(account, resource, refresh_timedelta=refresh)
+            )
+            if resource:
+                oauth_groups = account_groups(
+                    account, resource, refresh_timedelta=refresh)
+
+                groups = groups + list(set(oauth_groups) - set(groups))
+        except KeyError:
+            pass
 
     extend_identity(identity, groups)
 
