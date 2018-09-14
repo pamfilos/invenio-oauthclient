@@ -31,6 +31,8 @@ from .utils import create_csrf_disabled_registrationform, \
     oauth_register
 
 
+from .proxies import current_oauthclient
+
 #
 # Token handling
 #
@@ -65,7 +67,7 @@ def token_session_key(remote_app):
                       remote_app)
 
 
-def response_token_setter(remote, resp):
+def response_token_setter(remote, token):
     """Extract token from response and set it for the user.
 
     :param remote: The remote application.
@@ -76,22 +78,25 @@ def response_token_setter(remote, resp):
         authorized request.
     :returns: The token.
     """
-    if resp is None:
-        raise OAuthRejectedRequestError('User rejected request.', remote, resp)
-    else:
-        if 'access_token' in resp:
-            return oauth2_token_setter(remote, resp)
-        elif 'oauth_token' in resp and 'oauth_token_secret' in resp:
-            return oauth1_token_setter(remote, resp)
-        elif 'error' in resp:
-            # Only OAuth2 specifies how to send error messages
-            raise OAuthClientError(
-                'Authorization with remote service failed.', remote, resp,
-            )
-    raise OAuthResponseError('Bad OAuth authorized request', remote, resp)
+    
+    return oauth2_token_setter(remote, token)
+
+    # if resp is None:
+    #     raise OAuthRejectedRequestError('User rejected request.', remote, resp)
+    # else:
+    #     if 'access_token' in resp:
+    #         return oauth2_token_setter(remote, token, resp)
+    #     elif 'oauth_token' in resp and 'oauth_token_secret' in resp:
+    #         return oauth1_token_setter(remote, token, resp)
+    #     elif 'error' in resp:
+    #         # Only OAuth2 specifies how to send error messages
+    #         raise OAuthClientError(
+    #             'Authorization with remote service failed.', remote, resp,
+    #         )
+    # raise OAuthResponseError('Bad OAuth authorized request', remote, resp)
 
 
-def oauth1_token_setter(remote, resp, token_type='', extra_data=None):
+def oauth1_token_setter(remote, token, token_type='', extra_data=None):
     """Set an OAuth1 token.
 
     :param remote: The remote application.
@@ -109,7 +114,7 @@ def oauth1_token_setter(remote, resp, token_type='', extra_data=None):
     )
 
 
-def oauth2_token_setter(remote, resp, token_type='', extra_data=None):
+def oauth2_token_setter(remote, token, token_type='', extra_data=None):
     """Set an OAuth2 token.
 
     The refresh_token can be used to obtain a new access_token after
@@ -123,9 +128,10 @@ def oauth2_token_setter(remote, resp, token_type='', extra_data=None):
     :param extra_data: Extra information. (Default: ``None``)
     :returns: A :class:`invenio_oauthclient.models.RemoteToken` instance.
     """
+
     return token_setter(
         remote,
-        resp['access_token'],
+        token,
         secret='',
         token_type=token_type,
         extra_data=extra_data,
@@ -145,24 +151,25 @@ def token_setter(remote, token, secret='', token_type='', extra_data=None,
     :returns: A :class:`invenio_oauthclient.models.RemoteToken` instance or
         ``None``.
     """
-    session[token_session_key(remote.name)] = (token, secret)
+    session[token_session_key(remote)] = (token['access_token'], secret)
     user = user or current_user
 
+    # import ipdb;ipdb.set_trace()        
     # Save token if user is not anonymous (user exists but can be not active at
     # this moment)
     if not user.is_anonymous:
         uid = user.id
-        cid = remote.consumer_key
+        cid = remote.client_id
 
         # Check for already existing token
-        t = RemoteToken.get(uid, cid, token_type=token_type)
+        t = RemoteToken.get(uid, cid, token_type='bearer')
 
         if t:
             t.update_token(token, secret)
         else:
             t = RemoteToken.create(
                 uid, cid, token, secret,
-                token_type=token_type, extra_data=extra_data
+                token_type=token['token_type'], extra_data=extra_data
             )
         return t
     return None
@@ -178,6 +185,7 @@ def token_getter(remote, token=''):
         identify which token to retrieve. (Default: ``''``)
     :returns: The token.
     """
+
     session_key = token_session_key(remote.name)
 
     if session_key not in session and current_user.is_authenticated:
@@ -186,16 +194,52 @@ def token_getter(remote, token=''):
         remote_token = RemoteToken.get(
             current_user.get_id(),
             remote.consumer_key,
-            token_type=token,
+            token_type=token['token_type'],
         )
 
         if remote_token is None:
             return None
 
         # Store token and secret in session
-        session[session_key] = remote_token.token()
+        t = remote_token
+        t = (t.access_token, t.secret)
+        session[session_key] = t
 
     return session.get(session_key, None)
+
+def fetch_token(remote='cern', token=''):
+    """Retrieve OAuth access token.
+
+    Used by flask-oauthlib to get the access token when making requests.
+
+    :param remote: The remote application.
+    :param token: Type of token to get. Data passed from ``oauth.request()`` to
+        identify which token to retrieve. (Default: ``''``)
+    :returns: The token.
+    """
+
+    session_key = token_session_key(remote)
+
+    if session_key not in session and current_user.is_authenticated:
+        # Fetch key from token store if user is authenticated, and the key
+        # isn't already cached in the session.
+        remote_token = RemoteToken.get(
+            current_user.get_id(),
+            'cap_service_react_3',
+            token_type=token['token_type'],
+        )
+
+        import ipdb;ipdb.set_trace()
+
+        if remote_token is None:
+            return None
+
+        # Store token and secret in session
+        t = remote_token.token()
+        # t = (t.access_token, t.secret)
+        # session[session_key] = t
+
+        return t
 
 
 def token_delete(remote, token=''):
@@ -251,6 +295,7 @@ def authorized_default_handler(resp, remote, *args, **kwargs):
     :param resp: The response.
     :returns: Redirect response.
     """
+
     response_token_setter(remote, resp)
     db.session.commit()
     return redirect(url_for('invenio_oauthclient_settings.index'))
@@ -265,15 +310,22 @@ def authorized_signup_handler(resp, remote, *args, **kwargs):
     :returns: Redirect response.
     """
     # Remove any previously stored auto register session key
-    session.pop(token_session_key(remote.name) + '_autoregister', None)
+    # session.pop(token_session_key(remote.name) + '_autoregister', None)
 
     # Store token in session
     # ----------------------
     # Set token in session - token object only returned if
     # current_user.is_autenticated().
-    token = response_token_setter(remote, resp)
-    handlers = current_oauthclient.signup_handlers[remote.name]
 
+
+    # token = response_token_setter(remote, resp)
+ 
+    client = current_oauthclient.create_client(remote)
+    token = response_token_setter(client, resp)
+    handlers = current_oauthclient.signup_handlers[client.name]
+    token = client.authorize_access_token()
+
+    import ipdb;ipdb.set_trace()
     # Sign-in/up user
     # ---------------
     if not current_user.is_authenticated:
@@ -316,6 +368,7 @@ def authorized_signup_handler(resp, remote, *args, **kwargs):
         if not oauth_authenticate(remote.consumer_key, user,
                                   require_existing_link=False):
             return current_app.login_manager.unauthorized()
+
 
         # Link account
         # ------------
@@ -404,6 +457,7 @@ def signup_handler(remote, *args, **kwargs):
         session.pop(session_prefix + '_autoregister', None)
 
         # Link account and set session data
+        import ipdb; ipdb.set_trace()
         token = token_setter(remote, oauth_token[0], secret=oauth_token[1],
                              user=user)
         handlers = current_oauthclient.signup_handlers[remote.name]
@@ -462,8 +516,8 @@ def signup_handler(remote, *args, **kwargs):
 
 def oauth_logout_handler(sender_app, user=None):
     """Remove all access tokens from session on logout."""
-    oauth = current_app.extensions['oauthlib.client']
-    for remote in oauth.remote_apps.values():
+    oauth = current_oauthclient.oauth
+    for remote in oauth._clients.values():
         token_delete(remote)
     db.session.commit()
 
@@ -481,10 +535,10 @@ def make_handler(f, remote, with_response=True):
 
     @wraps(f)
     def inner(*args, **kwargs):
-        if with_response:
-            return f(args[0], remote, *args[1:], **kwargs)
-        else:
-            return f(remote, *args, **kwargs)
+        # if with_response:
+        #     return f(args[0], remote, *args[1:], **kwargs)
+        # else:
+        return f(remote, *args, **kwargs)
     return inner
 
 

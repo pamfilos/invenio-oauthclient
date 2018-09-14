@@ -129,7 +129,14 @@ class RemoteToken(db.Model, Timestamp):
     )
     """Access token to remote application."""
 
-    secret = db.Column(db.Text(), default='', nullable=False)
+    refresh_token = db.Column(
+        EncryptedType(type_in=db.Text, key=_secret_key), nullable=True
+    )
+    """Access token to remote application."""
+
+    expires_at = db.Column(db.Integer, default=0)
+
+    secret = db.Column(db.Text(), default='', nullable=True)
     """Used only by OAuth 1."""
 
     #
@@ -148,7 +155,12 @@ class RemoteToken(db.Model, Timestamp):
 
     def token(self):
         """Get token as expected by Flask-OAuthlib."""
-        return (self.access_token, self.secret)
+        return dict(
+            access_token=self.access_token,
+            token_type=self.token_type,
+            refresh_token=self.refresh_token,
+            expires_at=self.expires_at,
+        )
 
     def update_token(self, token, secret):
         """Update token with new values.
@@ -156,9 +168,13 @@ class RemoteToken(db.Model, Timestamp):
         :param token: The token value.
         :param secret: The secret key.
         """
-        if self.access_token != token or self.secret != secret:
+        if self.access_token != token['access_token'] or self.secret != secret:
+            import ipdb;ipdb.set_trace()
             with db.session.begin_nested():
-                self.access_token = token
+                self.access_token = token['access_token']
+                self.refresh_token = token['refresh_token']
+                # self.token_type = token['token_type']
+                self.expires_at = token['expires_at']
                 self.secret = secret
                 db.session.add(self)
 
@@ -232,9 +248,11 @@ class RemoteToken(db.Model, Timestamp):
                 db.session.add(account)
 
             token = cls(
-                token_type=token_type,
+                token_type=token['token_type'],
                 remote_account=account,
-                access_token=token,
+                access_token=token['access_token'],
+                refresh_token=token['refresh_token'],
+                expires_at=token['expires_at'],
                 secret=secret,
             )
             db.session.add(token)

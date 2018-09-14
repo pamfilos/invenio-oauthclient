@@ -209,7 +209,6 @@ def should_refresh_groups(extra_data_updated=None, refresh_timedelta=None):
 
     return True
 
-
 def account_groups(account, resource, refresh_timedelta=None):
     """Fetch account groups from resource if necessary."""
     updated = datetime.utcnow()
@@ -243,10 +242,11 @@ def disconnect_identity(identity):
 def get_dict_from_response(response):
     """Prepare new mapping with 'Value's groupped by 'Type'."""
     result = {}
-    if getattr(response, '_resp') and response._resp.code > 400:
+    if response.status_code > 400:
+    # if getattr(response, '_resp') and response._resp.code > 400:
         return result
 
-    for i in response.data:
+    for i in response.json():
         # strip the schema from the key
         k = i['Type'].replace(REMOTE_APP_RESOURCE_SCHEMA, '')
         result.setdefault(k, list())
@@ -257,6 +257,7 @@ def get_dict_from_response(response):
 def get_user_resources_ldap(user):
     import ldap
     from flask import jsonify
+
     # assert not isinstance(user, AnonymousUser)
 
     query=user.email
@@ -399,6 +400,10 @@ def on_identity_changed(sender, identity):
             'OAUTHCLIENT_CERN_REFRESH_TIMEDELTA',
             OAUTHCLIENT_CERN_REFRESH_TIMEDELTA
         )
+
+        # remote = find_remote_by_client_id(client_id)
+        client = current_oauthclient.oauth.create_client('cern')
+        resource = get_resource(client)
 
         if should_refresh_groups(resources_last_updated, refresh_timedelta):
             remote = find_remote_by_client_id(client_id)
